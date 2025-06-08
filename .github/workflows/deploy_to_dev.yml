@@ -1,0 +1,86 @@
+name: Deploy
+
+on:
+  push:
+    branches:
+      - develop
+
+env:
+  REGISTRY: ghcr.io
+  SERVICE_NAME: search_subbrands_dev
+
+jobs:
+  build_and_push_to_docker_hub:
+    name: Build and push Docker Image
+    runs-on: hetzner
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Login to Docker
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      # Build the Docker image and push to the Docker Registry
+      - name: Build and Push Docker Image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          push: true
+          tags: |
+            ${{ env.REGISTRY }}/${{ github.repository }}:dev
+
+  deploy_on_server:
+    name: Deploy on Server
+    runs-on: hetzner
+    needs: build_and_push_to_docker_hub
+    steps:
+
+      # SSH to server and deploy
+      - name: Deploy via SSH
+        uses: appleboy/ssh-action@master
+        with:
+          host: ${{ secrets.ENV_BRANDMATCH_SERVER_HOST_DEV }}
+          username: ${{ secrets.ENV_ACTION_SERVER_USER }}
+          key: ${{ secrets.ENV_ACTION_SERVER_USER_KEY }}
+          passphrase: ${{ secrets.ENV_ACTION_SERVER_USER_PASSPHRASE }}
+          script: |
+            # Make the repository folder and navigate into it.
+            mkdir -p ${{ env.SERVICE_NAME }}
+            cd ${{ env.SERVICE_NAME }}
+
+            echo "DATABASE_URL=${{ secrets.DATABASE_URL_DEV }}" >> .env
+            echo "RABBITMQ_URL=${{ secrets.ENV_RABBIT_MQ_AMQP_URI_DEV }}" >> .env
+            echo "RABBITMQ_QUEUE_NAME=${{ secrets.RABBITMQ_QUEUE_NAME_DEV }}" >> .env
+
+            # Stopping the running container
+            docker stop ${{ env.SERVICE_NAME }} || true
+            docker rm ${{ env.SERVICE_NAME }} || true
+            docker rmi ${{ env.REGISTRY }}/${{ github.repository }}:dev || true
+
+            echo "${{ secrets.GITHUB_TOKEN }}" | docker login ghcr.io -u $ --password-stdin
+
+            # Pull the Docker image.
+            docker pull ${{ env.REGISTRY }}/${{ github.repository }}:dev
+
+            # Create and run new container in detached mode.
+            docker run -d \
+              --name ${{ env.SERVICE_NAME }} \
+              --env-file .env \
+              --restart always \
+              ${{ env.REGISTRY }}/${{ github.repository }}:dev
+
+            # Remove the .env file.
+            rm .env
+            cd ..
+
+            # Remove the old repository folder.
+            if [ -d "${{ env.SERVICE_NAME }}" ]; then
+              rmdir ${{ env.SERVICE_NAME }}
+            fi
+
+            docker logout

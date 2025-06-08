@@ -1,0 +1,22 @@
+# Ignore virtual environment and Python cache
+.venv/
+venv/
+.env
+.ropeproject/
+.ruff_cache/
+
+# Ignore cache files
+__pycache__/
+*.py[cod]
+
+
+# Ignore system and IDE files
+.DS_Store
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# Ignore git files
+.git/
+.gitignore
